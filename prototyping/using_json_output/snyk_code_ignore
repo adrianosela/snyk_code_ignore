@@ -1,0 +1,231 @@
+#!/bin/bash
+
+SNYK_COMMAND="snyk code test"
+SNYK_STDOUT="$(mktemp)"
+
+ERR_UNEXPECTED_OUTPUT="Error: Got unexpected output for \"${SNYK_COMMAND}\""
+
+# set up trap with clean up
+clean_up () {
+    exit_code=$?
+    rm -f "${SNYK_STDOUT}"
+    exit $exit_code
+}
+trap clean_up EXIT TERM INT
+
+get_rule_id_varname() {
+    rule_id="${1}"
+
+    # Note: rule ids may include the slash character ('/'), which
+    #       is an invalid variable identifier so we replace that
+    #       with an underscore ('_'). Any other non alphanumeric
+    #       character is simply removed
+    echo "RULE_ID_TO_TEXT_$(echo "${rule_id}" | sed 's/\//_/g' | sed 's/[^a-zA-Z0-9_]//g')"
+}
+
+# identify target path argument (the only argument that is not a flag)
+SCAN_ROOT='./'
+for arg in "${@:1}"; do
+    if [[ "${arg}" != "-"* ]]; then
+        if echo "${arg}" | grep '/$' > /dev/null; then
+            SCAN_ROOT="${arg}"
+        else
+            SCAN_ROOT="${arg}/"
+        fi
+    fi
+done
+
+# check for presence of script dependencies
+for dep in snyk jq; do
+    if ! which "${dep}" > /dev/null; then
+        echo "Error: You are missing the \"${dep}\" binary, which is required to run this script."
+        exit 1
+    fi
+done
+
+# run the snyk cli command, capturing json output into stdout
+${SNYK_COMMAND} ${@:1} --json >> "${SNYK_STDOUT}"
+snyk_exit_code=$?
+if [[ $snyk_exit_code -ne 1 ]]; then
+    cat "${SNYK_STDOUT}"
+    exit $snyk_exit_code
+fi
+
+runs="$(jq .runs "${SNYK_STDOUT}")"
+if [[ "${runs}" == "null" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs\""
+    exit 1
+fi
+
+n_runs="$(echo "${runs}" | jq '. | length')"
+if [[ "${n_runs}" != "1" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": size of json array \".runs[]\" should be 1, got "${n_runs}""
+    exit 1
+fi
+
+tool="$(echo "${runs}" | jq .[0].tool)"
+if [[ "${tool}" == "null" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool\""
+    exit 1
+fi
+
+driver="$(echo "${tool}" | jq .driver)"
+if [[ "${driver}" == "null" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool.driver\""
+    exit 1
+fi
+
+driver_name="$(echo "${driver}" | jq -r .name)"
+expected_driver_name="SnykCode"
+if [[ "${driver_name}" != "${expected_driver_name}" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": value of \".runs[0].tool.driver.name\" should be \""${expected_driver_name}"\", got \""${driver_name}"\""
+    exit 1
+fi
+
+rules="$(echo "${driver}" | jq .rules)"
+if [[ "${rules}" == "null" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool.driver.rules\""
+    exit 1
+fi
+
+n_rules="$(echo "${rules}" | jq '. | length')"
+
+# snyk only includes rules whenever there are matching results
+# so if the rules array has length zero, there are no findings
+if [[ $n_rules -lt 1 ]]; then
+    echo "Success: No security issues found!"
+    exit 0
+fi
+
+for i in $(seq 0 $(($n_rules-1))); do
+    # get rule id
+    rule_id="$(echo "${rules}" | jq -r .[$i].id)"
+    if [[ "${rule_id}" == "null" ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool.driver.rules[$i].id\""
+        exit 1
+    fi
+
+    # get rule friendly text
+    short_description="$(echo "${rules}" | jq .[$i].shortDescription)"
+    if [[ "${short_description}" == "null" ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool.driver.rules[$i].shortDescription\""
+        exit 1
+    fi
+    text="$(echo "${short_description}" | jq -r .text)"
+    if [[ "${text}" == "null" ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].tool.driver.rules[$i].shortDescription.text\""
+        exit 1
+    fi
+
+    # Note: bash versions < v4 don't support hash tables, so
+    #       we create a variable for each rule id instead
+    varname="$(get_rule_id_varname "${rule_id}")"
+    declare "$varname=\"${text}\""
+done
+
+results="$(echo "${runs}" | jq .[0].results)"
+if [[ "${results}" == "null" ]]; then
+    echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results\""
+    exit 1
+fi
+
+n_results="$(echo "${results}" | jq '. | length')"
+if [[ $n_results -lt 1 ]]; then
+    echo "No security issues found!"
+    exit 0
+fi
+
+total_issues=0
+total_ignored=0
+for i in $(seq 0 $(($n_results-1))); do
+    total_issues=$(($total_issues + 1))
+
+    rule_id="$(echo "${results}" | jq .[$i].ruleId)"
+    if [[ "${rule_id}" == "null" ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].rule_id\""
+        exit 1
+    fi
+
+    varname="$(get_rule_id_varname "${rule_id}")"
+    title="$(echo "${!varname}" | sed 's/"//g')"
+
+    locations="$(echo "${results}" | jq .[$i].locations)"
+    if [[ "${locations}" == "null" ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations\""
+        exit 1
+    fi
+
+    n_locations="$(echo "${locations}" | jq '. | length')"
+    if [[ $n_locations -lt 1 ]]; then
+        echo ""${ERR_UNEXPECTED_OUTPUT}": issue with no reported code locations, title: \""${title}"\""
+        continue
+    fi
+
+    for j in $(seq 0 $(($n_locations-1))); do
+        physical_location="$(echo "${locations}" | jq .[$j].physicalLocation)"
+        if [[ "${physical_locations}" == "null" ]]; then
+            echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations.physicalLocation\""
+            exit 1
+        fi
+
+        artifact_location="$(echo "${physical_location}" | jq .artifactLocation)"
+        if [[ "${artifact_location}" == "null" ]]; then
+            echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations.physicalLocation.artifactLocation\""
+            exit 1
+        fi
+
+        uri="$(echo "${artifact_location}" | jq -r .uri)"
+        if [[ "${uri}" == "null" ]]; then
+            echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations.physicalLocation.artifactLocation.uri\""
+            exit 1
+        fi
+
+        region="$(echo "${physical_location}" | jq .region)"
+        if [[ "${region}" == "null" ]]; then
+            echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations.physicalLocation.region\""
+            exit 1
+        fi
+
+        end_line="$(echo "${region}" | jq -r .endLine)"
+        if [[ "${end_line}" == "null" ]]; then
+            echo ""${ERR_UNEXPECTED_OUTPUT}": missing json key \".runs[0].results[$i].locations.physicalLocation.region.endLine\""
+            exit 1
+        fi
+
+        # the search domain is the contents of the offending line and the line before it
+        search_domain=$(sed -n "$(($end_line - 1)),${end_line}p" "${SCAN_ROOT}${uri}")
+        if [[ "${search_domain}" == *"snyk:ignore:${title}"* ]]; then
+             total_ignored=$(($total_ignored + 1))
+        else
+            echo
+            echo "Found "${!varname}""
+            echo "Path: "${uri}":"${end_line}""
+        fi
+    done
+done
+
+echo
+echo "----------------------------------------------------------"
+
+# exit with status code zero if all flagged issues were ignored
+if [[ $total_issues -eq $total_ignored ]]; then
+    echo "Success: No security issues found!"
+    exit 0
+else
+    echo
+    echo "There are "${total_issues}" issues needing attention!"
+    if [[ $total_ignored -ne 0 ]]; then
+        echo "($total_ignored ignored)"
+    fi
+    echo
+    echo "Please remediate or ignore these by placing a comment of"
+    echo "the form snyk:ignore:\${RULE_NAME} in the offending line"
+    echo "or the line immediately above it."
+    echo
+    echo "Example:"
+    echo "------------------------------------------------------------------"
+    echo "password := \"mockpw\" // snyk:ignore:Use of Hardcoded Credentials"
+    echo "------------------------------------------------------------------"
+    echo
+    exit 1
+fi

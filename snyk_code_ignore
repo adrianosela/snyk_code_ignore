@@ -1,0 +1,84 @@
+#!/bin/bash
+
+SNYK_COMMAND="snyk code test"
+SNYK_STDOUT="$(mktemp)"
+
+# set up trap with clean up
+clean_up () {
+    exit_code=$?
+    rm -f "${SNYK_STDOUT}"
+    exit $exit_code
+}
+trap clean_up EXIT TERM INT
+
+# check for presence of script dependencies
+for dep in snyk; do
+    if ! which "${dep}" > /dev/null; then
+        echo "Error: You are missing the \"${dep}\" binary, which is required to run this script."
+        exit 1
+    fi
+done
+
+# run the snyk cli command, capturing stdout and stderr
+${SNYK_COMMAND} ${@:1} >> "${SNYK_STDOUT}"
+snyk_exit_code=$?
+if [[ $snyk_exit_code -ne 1 ]]; then
+    cat "${SNYK_STDOUT}"
+    exit $snyk_exit_code
+fi
+
+# capture the footer of the output containing info about the snyk
+# organization, the test type (always "Static code analysis", and
+# the file path being scanned
+output_footer="$(cat "${SNYK_STDOUT}" | grep -A 4 '✔ Test completed')"
+
+# parse out the project path, which we need in order to look for
+# for ignore rules within the files with reported issues. Append
+# a '/' at the end of the file path if not already present
+project_path="$(echo "${output_footer}" | grep 'Project path' | tr -d ' ' | cut -d ':' -f2)"
+if echo "${project_path}" | grep '/$' > /dev/null; then
+    project_path="${project_path}"
+else
+    project_path="${project_path}/"
+fi
+
+# print out scan output header
+sed -n '1,3p' "${SNYK_STDOUT}"
+
+total_issues=0
+total_ignored=0
+while read -r match; do
+    total_issues=$(($total_issues + 1))
+
+    title_line_number="$(echo "${match}" | cut -d ':' -f1 | tr -d ' ')"
+    title_line=$(echo "${match}" | cut -d ':' -f2)
+
+    # the title without finding severity (this is what we look for in ignore statements)
+    cleaned_up_title="$(echo "${title_line}" | cut -d ']' -f2 | sed 's/^ *//g')"
+
+    path_line_number=$(($title_line_number + 1))
+    path_line="$(sed -n "${path_line_number}p" "${SNYK_STDOUT}")"
+
+    offending_file="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f1)"
+    offending_line_number="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f2 | sed 's/^ *//g' | cut -d ' ' -f2)"
+
+    # the search domain is the contents of the offending line and the line before it
+    search_domain=$(sed -n "$(($offending_line_number - 1)),${offending_line_number}p" "${project_path}${offending_file}")
+    if [[ "${search_domain}" == *"snyk:ignore:${cleaned_up_title}"* ]]; then
+        total_ignored=$(($total_ignored + 1))
+    else
+        sed -n "${title_line_number},$(($title_line_number +3))p" "${SNYK_STDOUT}"
+    fi
+done <<< "$(grep -n '✗' "${SNYK_STDOUT}")"
+
+# print out scan output footer
+echo
+echo "${output_footer}"
+echo
+
+# exit with status code zero if all flagged issues were ignored
+if [[ $total_issues -eq $total_ignored ]]; then
+    exit 0
+else
+    exit 1
+fi
