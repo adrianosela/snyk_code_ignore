@@ -78,7 +78,23 @@ echo
 
 # exit with status code zero if all flagged issues were ignored
 if [[ $total_issues -eq $total_ignored ]]; then
+    echo "Success: No security issues found!"
     exit 0
 else
+    echo
+    echo "There are "${total_issues}" issues needing attention!"
+    if [[ $total_ignored -ne 0 ]]; then
+        echo "($total_ignored ignored)"
+    fi
+    echo
+    echo "Please remediate or ignore these by placing a comment of"
+    echo "the form snyk:ignore:\${RULE_NAME} in the offending line"
+    echo "or the line immediately above it."
+    echo
+    echo "Example:"
+    echo "------------------------------------------------------------------"
+    echo "password := \"mockpw\" // snyk:ignore:Use of Hardcoded Credentials"
+    echo "------------------------------------------------------------------"
+    echo
     exit 1
 fi
