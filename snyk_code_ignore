@@ -78,7 +78,11 @@ echo
 
 # exit with status code zero if all flagged issues were ignored
 if [[ $total_issues -eq $total_ignored ]]; then
-    echo "Success: No security issues found!"
+    msg="Success: No security issues found!"
+    if [[ $total_ignored -ne 0 ]]; then
+        msg=""${msg}" ("${total_ignored}" ignored)"
+    fi
+    echo "${msg}"
     exit 0
 else
     echo
