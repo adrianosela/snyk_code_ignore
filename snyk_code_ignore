@@ -20,7 +20,7 @@ for dep in snyk; do
 done
 
 # run the snyk cli command, capturing stdout and stderr
-${SNYK_COMMAND} ${@:1} >> "${SNYK_STDOUT}"
+FORCE_COLOR=0 ${SNYK_COMMAND} ${@:1} >> "${SNYK_STDOUT}"
 snyk_exit_code=$?
 if [[ $snyk_exit_code -ne 1 ]]; then
     cat "${SNYK_STDOUT}"
