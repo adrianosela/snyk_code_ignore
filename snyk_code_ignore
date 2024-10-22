@@ -28,12 +28,14 @@ if [[ $snyk_exit_code -ne 1 ]]; then
 fi
 
 # capture the footer of the output containing info about the snyk
-# organization, the test type (always "Static code analysis", and
+# organization, the test type (always "Static code analysis"), and
 # the file path being scanned
 output_footer="$(cat "${SNYK_STDOUT}" | grep -A 4 '✔ Test completed')"
+output_footer_first="$(echo "${output_footer}" | head -n 1)"
+output_footer_rest="$(echo "${output_footer}" | tail -n +2)"
 
 # parse out the project path, which we need in order to look for
-# for ignore rules within the files with reported issues. Append
+# ignore rules within the files with reported issues. Append
 # a '/' at the end of the file path if not already present
 project_path="$(echo "${output_footer}" | grep 'Project path' | tr -d ' ' | cut -d ':' -f2)"
 if echo "${project_path}" | grep '/$' > /dev/null; then
@@ -47,6 +49,7 @@ sed -n '1,3p' "${SNYK_STDOUT}"
 
 total_issues=0
 total_ignored=0
+total_need_addressing=0
 while read -r match; do
     total_issues=$(($total_issues + 1))
 
@@ -67,28 +70,44 @@ while read -r match; do
     if [[ "${search_domain}" == *"snyk:ignore:${cleaned_up_title}"* ]]; then
         total_ignored=$(($total_ignored + 1))
     else
-        sed -n "${title_line_number},$(($title_line_number +3))p" "${SNYK_STDOUT}"
+        severity="$(echo "${title_line}" | grep -o '\[\(High\|Medium\|Low\)\]')"
+        if [[ "$severity" == "[High]" ]]; then
+            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;31m/' | sed '2,$ s/^/\x1b[0m/'
+        elif [[ "$severity" == "[Medium]" ]]; then
+            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;33m/' | sed '2,$ s/^/\x1b[0m/'
+        elif [[ "$severity" == "[Low]" ]]; then
+            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[1;90m/' | sed '2,$ s/^/\x1b[0m/'
+        else
+            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}"
+        fi
+        total_need_addressing=$(($total_need_addressing + 1))
     fi
 done <<< "$(grep -n '✗' "${SNYK_STDOUT}")"
 
 # print out scan output footer
 echo
-echo "${output_footer}"
+# print the output header with bright green color
+echo -e "\x1b[1;92m${output_footer_first}\x1b[0m"
+# print the rest of the footer lines in default color
+echo "${output_footer_rest}"
 echo
 
 # exit with status code zero if all flagged issues were ignored
 if [[ $total_issues -eq $total_ignored ]]; then
-    msg="Success: No security issues found!"
+    msg="\x1b[1;92mSuccess: No security issues found!\x1b[0m"
     if [[ $total_ignored -ne 0 ]]; then
-        msg=""${msg}" ("${total_ignored}" ignored)"
+        msg=""${msg}" (\x1b[1;90m${total_ignored} issues ignored\x1b[0m)"
     fi
-    echo "${msg}"
+    echo -e "${msg}"
     exit 0
 else
     echo
-    echo "There are "${total_issues}" issues needing attention!"
+    echo "There are "${total_issues}" total issues:"
+    if [[ $total_need_addressing -ne 0 ]]; then
+        echo -e " * \x1b[0;31m${total_need_addressing} issues needing attention!\x1b[0m"
+    fi
     if [[ $total_ignored -ne 0 ]]; then
-        echo "($total_ignored ignored)"
+        echo -e " * \x1b[1;90m${total_ignored} issues ignored\x1b[0m"
     fi
     echo
     echo "Please remediate or ignore these by placing a comment of"
