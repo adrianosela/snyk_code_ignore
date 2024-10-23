@@ -1,6 +1,7 @@
 # snyk_code_ignore
 
-> Note: Tested with Snyk CLI version 1.1019.0
+> Note: Originally tested with Snyk CLI version 1.1019.0
+        Last Snyk CLI version tested: 1.1293.1
 
 A thin wrapper around the Snyk CLI that allows ignoring code issues with in-line comments
 
