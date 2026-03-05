@@ -59,8 +59,7 @@ while read -r match; do
     # the title without finding severity (this is what we look for in ignore statements)
     cleaned_up_title="$(echo "${title_line}" | cut -d ']' -f2 | sed 's/^ *//g')"
 
-    path_line_number=$(($title_line_number + 1))
-    path_line="$(sed -n "${path_line_number}p" "${SNYK_STDOUT}")"
+    path_line="$(sed -n "$((title_line_number + 1)),$((title_line_number + 6))p" "${SNYK_STDOUT}" | grep 'Path:' | head -n 1)"
 
     offending_file="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f1)"
     offending_line_number="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f2 | sed 's/^ *//g' | cut -d ' ' -f2)"
@@ -72,13 +71,13 @@ while read -r match; do
     else
         severity="$(echo "${title_line}" | grep -o '\[\(High\|Medium\|Low\)\]')"
         if [[ "$severity" == "[High]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;31m/' | sed '2,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;31m/' | sed '3,$ s/^/\x1b[0m/'
         elif [[ "$severity" == "[Medium]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;33m/' | sed '2,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;33m/' | sed '3,$ s/^/\x1b[0m/'
         elif [[ "$severity" == "[Low]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[1;90m/' | sed '2,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[1;90m/' | sed '3,$ s/^/\x1b[0m/'
         else
-            sed -n "${title_line_number},$(($title_line_number + 3))p" "${SNYK_STDOUT}"
+            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}"
         fi
         total_need_addressing=$(($total_need_addressing + 1))
     fi
