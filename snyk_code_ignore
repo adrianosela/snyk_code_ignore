@@ -38,8 +38,6 @@ output_footer_rest="$(echo "${output_footer}" | tail -n +2)"
 # ignore rules within the files with reported issues. Append
 # a '/' at the end of the file path if not already present
 project_path="$(echo "${output_footer}" | grep 'Project path' | sed 's/.*Project path: *//;s/ *│.*//')"
-echo "Output footer is: ${output_footer}"
-echo "Project path is: ${project_path}"
 if echo "${project_path}" | grep '/$' > /dev/null; then
     project_path="${project_path}"
 else
