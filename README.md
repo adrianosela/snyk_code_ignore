@@ -1,7 +1,9 @@
 # snyk_code_ignore
 
 > Note: Originally tested with Snyk CLI version 1.1019.0
-        Last Snyk CLI version tested: 1.1293.1
+        Last Snyk CLI version tested: 1.1303.1
+
+> The script auto-detects the Snyk CLI output format and is compatible with both older and newer versions.
 
 A thin wrapper around the Snyk CLI that allows ignoring code issues with in-line comments
 
@@ -37,6 +39,15 @@ Download the script to your binaries path and make it executable:
 ```
 curl https://raw.githubusercontent.com/adrianosela/snyk_code_ignore/main/snyk_code_ignore --output /usr/local/bin/snyk_code_ignore
 chmod +x /usr/local/bin/snyk_code_ignore
+```
+
+### Pinning to a Specific Version
+
+The `main` branch always reflects the latest version. If you need to pin to a specific version (e.g., for reproducible CI pipelines), use a commit SHA or a tag in the URL:
+
+```
+# pin to a specific commit SHA
+curl https://raw.githubusercontent.com/adrianosela/snyk_code_ignore/<COMMIT_SHA>/snyk_code_ignore --output /usr/local/bin/snyk_code_ignore
 ```
 
 ### Ignoring an Issue
