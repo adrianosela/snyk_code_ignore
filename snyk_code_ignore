@@ -27,15 +27,36 @@ if [[ $snyk_exit_code -ne 1 ]]; then
     exit $snyk_exit_code
 fi
 
+# detect which output format the installed snyk CLI produces
+if grep -q 'Test Summary' "${SNYK_STDOUT}"; then
+    SNYK_OUTPUT_FORMAT="new"
+elif grep -q '✔ Test completed' "${SNYK_STDOUT}"; then
+    SNYK_OUTPUT_FORMAT="legacy"
+else
+    echo "Error: Unrecognized snyk output format"
+    cat "${SNYK_STDOUT}"
+    exit 1
+fi
+
 # capture the footer of the output containing info about the snyk
 # organization, the test type (always "Static code analysis"), and
 # the file path being scanned
-output_footer="$(cat "${SNYK_STDOUT}" | grep -B 1 -A 9 'Test Summary' | grep -v 'Total issues\|Ignored issues\|Open issues')"
+if [[ "$SNYK_OUTPUT_FORMAT" == "new" ]]; then
+    output_footer="$(cat "${SNYK_STDOUT}" | grep -B 1 -A 9 'Test Summary' | grep -v 'Total issues\|Ignored issues\|Open issues')"
+else
+    output_footer="$(cat "${SNYK_STDOUT}" | grep -A 4 '✔ Test completed')"
+    output_footer_first="$(echo "${output_footer}" | head -n 1)"
+    output_footer_rest="$(echo "${output_footer}" | tail -n +2)"
+fi
 
 # parse out the project path, which we need in order to look for
 # ignore rules within the files with reported issues. Append
 # a '/' at the end of the file path if not already present
-project_path="$(echo "${output_footer}" | grep 'Project path' | sed 's/.*Project path: *//;s/ *│.*//')"
+if [[ "$SNYK_OUTPUT_FORMAT" == "new" ]]; then
+    project_path="$(echo "${output_footer}" | grep 'Project path' | sed 's/.*Project path: *//;s/ *│.*//')"
+else
+    project_path="$(echo "${output_footer}" | grep 'Project path' | tr -d ' ' | cut -d ':' -f2)"
+fi
 if echo "${project_path}" | grep '/$' > /dev/null; then
     project_path="${project_path}"
 else
@@ -57,7 +78,11 @@ while read -r match; do
     # the title without finding severity (this is what we look for in ignore statements)
     cleaned_up_title="$(echo "${title_line}" | cut -d ']' -f2 | sed 's/^ *//g')"
 
-    path_line="$(sed -n "$((title_line_number + 1)),$((title_line_number + 6))p" "${SNYK_STDOUT}" | grep 'Path:' | head -n 1)"
+    if [[ "$SNYK_OUTPUT_FORMAT" == "new" ]]; then
+        path_line="$(sed -n "$((title_line_number + 1)),$((title_line_number + 6))p" "${SNYK_STDOUT}" | grep 'Path:' | head -n 1)"
+    else
+        path_line="$(sed -n "$((title_line_number + 1))p" "${SNYK_STDOUT}")"
+    fi
 
     offending_file="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f1)"
     offending_line_number="$(echo "${path_line}" | cut -d ':' -f2 | sed 's/^ *//g' | cut -d ',' -f2 | sed 's/^ *//g' | cut -d ' ' -f2)"
@@ -67,15 +92,16 @@ while read -r match; do
     if [[ "${search_domain}" == *"snyk:ignore:${cleaned_up_title}"* ]]; then
         total_ignored=$(($total_ignored + 1))
     else
+        display_lines=$([ "$SNYK_OUTPUT_FORMAT" == "new" ] && echo 4 || echo 3)
         severity="$(echo "${title_line}" | grep -o '\[\(High\|Medium\|Low\)\]')"
         if [[ "$severity" == "[High]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;31m/' | sed '3,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + $display_lines))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;31m/' | sed '3,$ s/^/\x1b[0m/'
         elif [[ "$severity" == "[Medium]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;33m/' | sed '3,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + $display_lines))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[0;33m/' | sed '3,$ s/^/\x1b[0m/'
         elif [[ "$severity" == "[Low]" ]]; then
-            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[1;90m/' | sed '3,$ s/^/\x1b[0m/'
+            sed -n "${title_line_number},$(($title_line_number + $display_lines))p" "${SNYK_STDOUT}" | sed '1 s/^/\x1b[1;90m/' | sed '3,$ s/^/\x1b[0m/'
         else
-            sed -n "${title_line_number},$(($title_line_number + 4))p" "${SNYK_STDOUT}"
+            sed -n "${title_line_number},$(($title_line_number + $display_lines))p" "${SNYK_STDOUT}"
         fi
         total_need_addressing=$(($total_need_addressing + 1))
     fi
@@ -83,7 +109,12 @@ done <<< "$(grep -n '✗' "${SNYK_STDOUT}")"
 
 # print out scan output footer
 echo
-echo "${output_footer}"
+if [[ "$SNYK_OUTPUT_FORMAT" == "new" ]]; then
+    echo "${output_footer}"
+else
+    echo -e "\x1b[1;92m${output_footer_first}\x1b[0m"
+    echo "${output_footer_rest}"
+fi
 echo
 
 # exit with status code zero if all flagged issues were ignored
