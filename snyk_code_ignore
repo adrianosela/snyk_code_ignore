@@ -30,9 +30,7 @@ fi
 # capture the footer of the output containing info about the snyk
 # organization, the test type (always "Static code analysis"), and
 # the file path being scanned
-output_footer="$(cat "${SNYK_STDOUT}" | grep -B 1 -A 9 'Test Summary')"
-output_footer_first="$(echo "${output_footer}" | head -n 1)"
-output_footer_rest="$(echo "${output_footer}" | tail -n +2)"
+output_footer="$(cat "${SNYK_STDOUT}" | grep -B 1 -A 9 'Test Summary' | grep -v 'Total issues\|Ignored issues\|Open issues')"
 
 # parse out the project path, which we need in order to look for
 # ignore rules within the files with reported issues. Append
@@ -85,9 +83,6 @@ done <<< "$(grep -n '✗' "${SNYK_STDOUT}")"
 
 # print out scan output footer
 echo
-# print the output header with bright green color
-# echo -e "\x1b[1;92m${output_footer_first}\x1b[0m"
-# print the rest of the footer lines in default color
 echo "${output_footer}"
 echo
 
